@@ -156,7 +156,7 @@ databricks volumes create main retail gold MANAGED --comment "Aggregated retail 
 
 ```powershell
 databricks fs mkdirs dbfs:/Volumes/main/retail/bronze/raw
-databricks fs cp data/raw dbfs:/Volumes/main/retail/bronze/raw --recursive
+python src/ingestion/upload_to_volume.py --full --profile DEFAULT
 databricks fs ls dbfs:/Volumes/main/retail/bronze/raw
 ```
 
@@ -165,7 +165,7 @@ databricks fs ls dbfs:/Volumes/main/retail/bronze/raw
 ```powershell
 python src/generation/scheduler.py --once
 python src/ingestion/raw_extract.py
-databricks fs cp data/raw dbfs:/Volumes/main/retail/bronze/raw --recursive
+python src/ingestion/upload_to_volume.py --profile DEFAULT
 ```
 
 ## .env keys used now
@@ -181,6 +181,7 @@ Reserved for Databricks-related scripts:
 - `DATABRICKS_HOST`
 - `DATABRICKS_TOKEN`
 - `DATABRICKS_WAREHOUSE_ID`
+- `DATABRICKS_PROFILE` (optional, default `DEFAULT`)
 
 ## What is already implemented
 
