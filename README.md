@@ -123,41 +123,37 @@ databricks workspace ls /
 
 This project assumes Unity Catalog is enabled and you have:
 
-- Catalog: `main`
-- Schema: `retail` (required, under catalog `main`)
-- Volumes: `main.retail.bronze`, `main.retail.silver`, `main.retail.gold`
+- Catalog: `retail`
+- Schemas: `bronze`, `silver`, `gold`
+- Volume for raw landing: `/Volumes/retail/raw/source_data`
 
 Check available schemas:
 
 ```powershell
-databricks schemas list main
+databricks schemas list retail
 ```
 
 Create schema if needed:
 
 ```powershell
-databricks schemas create retail --catalog-name main
+databricks schemas create bronze --catalog-name retail
+databricks schemas create silver --catalog-name retail
+databricks schemas create gold --catalog-name retail
 ```
 
-Create volumes once (if they do not exist):
+Create volume once (if it does not exist):
 
 ```powershell
-# Bronze volume (managed)
-databricks volumes create main retail bronze MANAGED --comment "Raw retail data files"
-
-# Silver volume (managed)
-databricks volumes create main retail silver MANAGED --comment "Cleaned retail data"
-
-# Gold volume (managed)
-databricks volumes create main retail gold MANAGED --comment "Aggregated retail data"
+# Raw landing volume (managed)
+databricks volumes create retail raw source_data MANAGED --comment "Raw retail data files"
 ```
 
 ### 9. Upload local raw files to Bronze volume
 
 ```powershell
-databricks fs mkdirs dbfs:/Volumes/main/retail/bronze/raw
+databricks fs mkdirs dbfs:/Volumes/retail/raw/source_data
 python src/ingestion/upload_to_volume.py --full --profile DEFAULT
-databricks fs ls dbfs:/Volumes/main/retail/bronze/raw
+databricks fs ls dbfs:/Volumes/retail/raw/source_data
 ```
 
 ## Standard Daily Workflow
@@ -191,6 +187,6 @@ Reserved for Databricks-related scripts:
 
 ## Next implementation steps
 
-1. Build Databricks notebook/job to read `dbfs:/Volumes/main/retail/bronze/raw/*` and create Bronze Delta tables.
+1. Build Databricks notebook/job to read `dbfs:/Volumes/retail/raw/source_data/*` and create Bronze Delta tables in `retail.bronze`.
 2. Implement Silver Delta merge logic with `is_deleted` handling and deduplication.
 3. Build Gold star schema (`fact_order_line`, dimensions, KPI views).

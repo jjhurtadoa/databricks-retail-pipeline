@@ -75,6 +75,32 @@ def upload_file(local_path: Path, remote_path: str, profile: str) -> bool:
     return True
 
 
+def ensure_remote_dir(remote_dir: str, profile: str) -> bool:
+    """Ensure remote Databricks volume directory exists."""
+    clean_env = os.environ.copy()
+    clean_env.pop("DATABRICKS_HOST", None)
+    clean_env.pop("DATABRICKS_TOKEN", None)
+    clean_env.pop("DATABRICKS_ACCOUNT_ID", None)
+
+    result = subprocess.run(
+        [
+            "databricks",
+            "--profile",
+            profile,
+            "fs",
+            "mkdirs",
+            remote_dir,
+        ],
+        capture_output=True,
+        text=True,
+        env=clean_env,
+    )
+    if result.returncode != 0:
+        logger.error("  Failed to create remote dir %s: %s", remote_dir, result.stderr.strip())
+        return False
+    return True
+
+
 # ── Main upload ────────────────────────────────────────────────────────────────
 
 def run_upload(raw_path: str, volume_path: str, profile: str, full: bool = False) -> int:
@@ -89,6 +115,12 @@ def run_upload(raw_path: str, volume_path: str, profile: str, full: bool = False
         table_dir = raw_dir / table
         if not table_dir.exists():
             logger.warning("  %s: local folder not found, skipping", table)
+            continue
+
+        remote_table_dir = f"{volume_path}/{table}"
+        if not ensure_remote_dir(remote_table_dir, profile):
+            logger.error("  Skipping table %s because remote directory could not be prepared", table)
+            failed += 1
             continue
 
         jsonl_files = sorted(table_dir.glob("*.jsonl"))
@@ -135,7 +167,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     raw_path    = args.raw_path    or os.getenv("RAW_OUTPUT_PATH",    "data/raw")
-    volume_path = args.volume_path or os.getenv("VOLUME_BRONZE_PATH", "dbfs:/Volumes/main/retail/bronze/raw")
+    volume_path = args.volume_path or os.getenv("VOLUME_BRONZE_PATH", "dbfs:/Volumes/retail/raw/source_data")
     profile     = args.profile     or os.getenv("DATABRICKS_PROFILE", "DEFAULT")
 
     exit_code = run_upload(raw_path, volume_path, profile=profile, full=args.full)
