@@ -15,7 +15,6 @@ from typing import List
 from delta.tables import DeltaTable
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
-from pyspark.sql.window import Window
 
 from src.utils.config import Config
 from src.utils.logger import get_logger
@@ -26,6 +25,7 @@ logger = get_logger(__name__)
 # ---------------------------------------------------------------------------
 # DDL — Gold table schemas
 # ---------------------------------------------------------------------------
+
 
 def create_gold_tables(spark: SparkSession) -> None:
     """Create target Gold tables if they don't exist."""
@@ -101,14 +101,19 @@ def create_gold_tables(spark: SparkSession) -> None:
 # Transformation and merge helpers
 # ---------------------------------------------------------------------------
 
-def upsert_to_gold(spark: SparkSession, df_source: DataFrame, gold_table: str, primary_key: str) -> None:
+
+def upsert_to_gold(
+    spark: SparkSession, df_source: DataFrame, gold_table: str, primary_key: str
+) -> None:
     """SCD Type 1 MERGE into a Gold table.
-    
+
     - Match found  → overwrite all columns (except PK excluded from update set)
     - No match     → insert new row
     """
     # Build update mapping: exclude primary key from SET clause
-    update_mapping = {col: f"source.{col}" for col in df_source.columns if col != primary_key}
+    update_mapping = {
+        col: f"source.{col}" for col in df_source.columns if col != primary_key
+    }
     insert_mapping = {col: f"source.{col}" for col in df_source.columns}
 
     delta_table = DeltaTable.forName(spark, gold_table)
@@ -116,8 +121,7 @@ def upsert_to_gold(spark: SparkSession, df_source: DataFrame, gold_table: str, p
     (
         delta_table.alias("target")
         .merge(
-            df_source.alias("source"),
-            f"target.{primary_key} = source.{primary_key}"
+            df_source.alias("source"), f"target.{primary_key} = source.{primary_key}"
         )
         .whenMatchedUpdate(set=update_mapping)
         .whenNotMatchedInsert(values=insert_mapping)
@@ -125,14 +129,16 @@ def upsert_to_gold(spark: SparkSession, df_source: DataFrame, gold_table: str, p
     )
 
 
-def validate_gold(spark: SparkSession, gold_table: str, primary_key: str, label: str) -> bool:
+def validate_gold(
+    spark: SparkSession, gold_table: str, primary_key: str, label: str
+) -> bool:
     """Basic quality checks on a Gold table.
-    
+
     Checks:
     1. Duplicates on primary key
     2. Nulls on primary key
     3. Row count summary
-    
+
     Returns True if all checks pass.
     """
     df = spark.table(gold_table)
@@ -166,9 +172,11 @@ def validate_gold(spark: SparkSession, gold_table: str, primary_key: str, label:
     return all_ok
 
 
-def validate_foreign_keys(spark: SparkSession, fact_table: str, fk_rules: List[dict], label: str = "FACT") -> bool:
+def validate_foreign_keys(
+    spark: SparkSession, fact_table: str, fk_rules: List[dict], label: str = "FACT"
+) -> bool:
     """Check foreign key constraints in fact table.
-    
+
     fk_rules: list of dicts:
       {
         "fact_key": "customer_id",
@@ -176,7 +184,7 @@ def validate_foreign_keys(spark: SparkSession, fact_table: str, fk_rules: List[d
         "dim_key": "customer_id",
         "rule_name": "customer_fk"
       }
-    
+
     Returns True if no orphans found.
     """
     logger.info("")
@@ -212,9 +220,10 @@ def validate_foreign_keys(spark: SparkSession, fact_table: str, fk_rules: List[d
 # Dimension builders
 # ---------------------------------------------------------------------------
 
+
 def build_dim_date(spark: SparkSession) -> None:
     """Build static date dimension (2020-01-01 to 2030-12-31).
-    
+
     date_id format: YYYYMMDD (INT) — industry standard for fast joins.
     """
     logger.info("Building dim_date...")
@@ -225,8 +234,12 @@ def build_dim_date(spark: SparkSession) -> None:
 
     df_date = (
         spark.range(total_days)
-        .withColumn("full_date", F.date_add(F.lit(str(start_date)), F.col("id").cast("int")))
-        .withColumn("date_id", F.date_format(F.col("full_date"), "yyyyMMdd").cast("int"))
+        .withColumn(
+            "full_date", F.date_add(F.lit(str(start_date)), F.col("id").cast("int"))
+        )
+        .withColumn(
+            "date_id", F.date_format(F.col("full_date"), "yyyyMMdd").cast("int")
+        )
         .withColumn("year", F.year("full_date"))
         .withColumn("quarter", F.quarter("full_date"))
         .withColumn("month", F.month("full_date"))
@@ -236,14 +249,15 @@ def build_dim_date(spark: SparkSession) -> None:
         .withColumn("day_of_week", F.dayofweek("full_date"))
         .withColumn("day_name", F.date_format(F.col("full_date"), "EEEE"))
         .withColumn("is_weekend", F.dayofweek(F.col("full_date")).isin([1, 7]))
-        .withColumn("is_month_end", F.col("full_date") == F.last_day(F.col("full_date")))
+        .withColumn(
+            "is_month_end", F.col("full_date") == F.last_day(F.col("full_date"))
+        )
         .drop("id")
     )
 
     # Overwrite — static dimension rebuilt each run
     (
-        df_date.write
-        .format("delta")
+        df_date.write.format("delta")
         .mode("overwrite")
         .option("overwriteSchema", "true")
         .saveAsTable("gold.dim_date")
@@ -255,25 +269,22 @@ def build_dim_date(spark: SparkSession) -> None:
 
 def build_dim_customer(spark: SparkSession) -> None:
     """Build customer dimension from Silver.
-    
+
     SCD Type 1: overwrite on match. is_active = NOT is_deleted.
     """
     logger.info("Building dim_customer...")
 
-    df_dim = (
-        spark.table("silver.customers")
-        .select(
-            F.col("customer_id"),
-            F.col("first_name"),
-            F.col("last_name"),
-            F.col("email"),
-            F.col("segment"),
-            F.col("city"),
-            F.col("country"),
-            (~F.col("is_deleted")).alias("is_active"),
-            F.col("created_at"),
-            F.col("updated_at")
-        )
+    df_dim = spark.table("silver.customers").select(
+        F.col("customer_id"),
+        F.col("first_name"),
+        F.col("last_name"),
+        F.col("email"),
+        F.col("segment"),
+        F.col("city"),
+        F.col("country"),
+        (~F.col("is_deleted")).alias("is_active"),
+        F.col("created_at"),
+        F.col("updated_at"),
     )
 
     upsert_to_gold(spark, df_dim, "gold.dim_customer", "customer_id")
@@ -283,25 +294,22 @@ def build_dim_customer(spark: SparkSession) -> None:
 
 def build_dim_product(spark: SparkSession) -> None:
     """Build product dimension from Silver.
-    
+
     SCD Type 1. Keeps category and subcategory (no separate dim_category).
     unit_price here is current price; sale price lives in fact.
     """
     logger.info("Building dim_product...")
 
-    df_dim = (
-        spark.table("silver.products")
-        .select(
-            F.col("product_id"),
-            F.col("name"),
-            F.col("category"),
-            F.col("subcategory"),
-            F.col("unit_price"),
-            F.col("cost_price"),
-            (~F.col("is_deleted")).alias("is_active"),
-            F.col("created_at"),
-            F.col("updated_at")
-        )
+    df_dim = spark.table("silver.products").select(
+        F.col("product_id"),
+        F.col("name"),
+        F.col("category"),
+        F.col("subcategory"),
+        F.col("unit_price"),
+        F.col("cost_price"),
+        (~F.col("is_deleted")).alias("is_active"),
+        F.col("created_at"),
+        F.col("updated_at"),
     )
 
     upsert_to_gold(spark, df_dim, "gold.dim_product", "product_id")
@@ -311,13 +319,13 @@ def build_dim_product(spark: SparkSession) -> None:
 
 def build_fact_order_line(spark: SparkSession) -> None:
     """Build fact table from Silver.
-    
+
     Grain: one row per order_item_id.
-    
+
     JOINs:
     - order_items → orders (for order context)
     - order_items → products (for cost/margin calculation, LEFT to keep deleted products)
-    
+
     Derived columns:
     - date_id: YYYYMMDD INT from order_ts
     - gross_margin: line_total - (quantity * cost_price)
@@ -334,7 +342,7 @@ def build_fact_order_line(spark: SparkSession) -> None:
             "quantity",
             F.col("unit_price").alias("sale_unit_price"),
             "line_total",
-            "_extracted_at"
+            "_extracted_at",
         )
     )
 
@@ -346,33 +354,25 @@ def build_fact_order_line(spark: SparkSession) -> None:
             "customer_id",
             F.col("order_status"),
             "shipping_city",
-            "order_ts"
+            "order_ts",
         )
     )
 
-    df_products = (
-        spark.table("silver.products")
-        .select(
-            "product_id",
-            F.col("cost_price").alias("product_cost_price")
-        )
+    df_products = spark.table("silver.products").select(
+        "product_id", F.col("cost_price").alias("product_cost_price")
     )
 
     # Build fact with JOINs and calculations
     df_fact = (
-        df_order_items
-        .join(df_orders, on="order_id", how="inner")
+        df_order_items.join(df_orders, on="order_id", how="inner")
         .join(df_products, on="product_id", how="left")
-        .withColumn(
-            "date_id",
-            F.date_format(F.col("order_ts"), "yyyyMMdd").cast("int")
-        )
+        .withColumn("date_id", F.date_format(F.col("order_ts"), "yyyyMMdd").cast("int"))
         .withColumn(
             "gross_margin",
             F.round(
                 F.col("line_total") - (F.col("quantity") * F.col("product_cost_price")),
-                2
-            )
+                2,
+            ),
         )
         .select(
             F.col("order_item_id"),
@@ -388,7 +388,7 @@ def build_fact_order_line(spark: SparkSession) -> None:
             F.col("product_cost_price").alias("cost_price"),
             F.col("gross_margin"),
             F.col("order_ts"),
-            F.col("_extracted_at")
+            F.col("_extracted_at"),
         )
     )
 
@@ -400,6 +400,7 @@ def build_fact_order_line(spark: SparkSession) -> None:
 # ---------------------------------------------------------------------------
 # Data quality and KPI views
 # ---------------------------------------------------------------------------
+
 
 def validate_metrics(spark: SparkSession) -> bool:
     """Check for negative business metrics in fact table."""
@@ -503,8 +504,9 @@ def create_kpi_views(spark: SparkSession) -> None:
 # Pipeline orchestrator
 # ---------------------------------------------------------------------------
 
+
 def run(spark: SparkSession) -> None:
-    """Execute the full Gold pipeline: build dims → build fact → validate → optimize → create KPIs."""
+    """Execute full Gold pipeline: dims → fact → validate → optimize → KPIs."""
     catalog = Config.UNITY_CATALOG
     gold_schema = Config.GOLD_SCHEMA
 
@@ -529,9 +531,24 @@ def run(spark: SparkSession) -> None:
 
     # FK validation
     fk_rules = [
-        {"fact_key": "customer_id", "dim_table": "gold.dim_customer", "dim_key": "customer_id", "rule_name": "customer_fk"},
-        {"fact_key": "product_id", "dim_table": "gold.dim_product", "dim_key": "product_id", "rule_name": "product_fk"},
-        {"fact_key": "date_id", "dim_table": "gold.dim_date", "dim_key": "date_id", "rule_name": "date_fk"},
+        {
+            "fact_key": "customer_id",
+            "dim_table": "gold.dim_customer",
+            "dim_key": "customer_id",
+            "rule_name": "customer_fk",
+        },
+        {
+            "fact_key": "product_id",
+            "dim_table": "gold.dim_product",
+            "dim_key": "product_id",
+            "rule_name": "product_fk",
+        },
+        {
+            "fact_key": "date_id",
+            "dim_table": "gold.dim_date",
+            "dim_key": "date_id",
+            "rule_name": "date_fk",
+        },
     ]
     validate_foreign_keys(spark, "gold.fact_order_line", fk_rules, "FACT_ORDER_LINE")
 

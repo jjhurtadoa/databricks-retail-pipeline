@@ -35,19 +35,39 @@ TABLES: List[dict] = [
         "bronze_table": "bronze.orders",
         "silver_table": "silver.orders",
         "primary_key": "order_id",
-        "key_columns": ["order_id", "customer_id", "order_ts", "order_status", "created_at"],
+        "key_columns": [
+            "order_id",
+            "customer_id",
+            "order_ts",
+            "order_status",
+            "created_at",
+        ],
     },
     {
         "bronze_table": "bronze.order_items",
         "silver_table": "silver.order_items",
         "primary_key": "order_item_id",
-        "key_columns": ["order_item_id", "order_id", "product_id", "quantity", "unit_price"],
+        "key_columns": [
+            "order_item_id",
+            "order_id",
+            "product_id",
+            "quantity",
+            "unit_price",
+        ],
     },
     {
         "bronze_table": "bronze.products",
         "silver_table": "silver.products",
         "primary_key": "product_id",
-        "key_columns": ["product_id", "name", "cost_price", "unit_price", "category", "subcategory", "created_at"],
+        "key_columns": [
+            "product_id",
+            "name",
+            "cost_price",
+            "unit_price",
+            "category",
+            "subcategory",
+            "created_at",
+        ],
     },
 ]
 
@@ -55,6 +75,7 @@ TABLES: List[dict] = [
 # ---------------------------------------------------------------------------
 # DDL — Silver table schemas
 # ---------------------------------------------------------------------------
+
 
 def create_silver_tables(spark: SparkSession) -> None:
     """Create target Silver tables if they don't exist."""
@@ -130,6 +151,7 @@ def create_silver_tables(spark: SparkSession) -> None:
 # Transformation helpers
 # ---------------------------------------------------------------------------
 
+
 def cast_boolean_columns(df: DataFrame, columns: List[str] = None) -> DataFrame:
     """Cast specified columns to boolean type."""
     if columns is None:
@@ -143,24 +165,24 @@ def cast_boolean_columns(df: DataFrame, columns: List[str] = None) -> DataFrame:
 
 def deduplicate(df: DataFrame, primary_key: str) -> DataFrame:
     """Keep the latest record per primary key.
-    
+
     Tie-breaker: updated_at DESC, then _extracted_at DESC.
     """
     window = Window.partitionBy(primary_key).orderBy(
-        F.col("updated_at").desc(),
-        F.col("_extracted_at").desc()
+        F.col("updated_at").desc(), F.col("_extracted_at").desc()
     )
     return (
-        df
-        .withColumn("_rn", F.row_number().over(window))
+        df.withColumn("_rn", F.row_number().over(window))
         .filter(F.col("_rn") == 1)
         .drop("_rn")
     )
 
 
-def upsert_to_silver(df_source: DataFrame, silver_table: str, primary_key: str) -> None:
+def upsert_to_silver(
+    spark: SparkSession, df_source: DataFrame, silver_table: str, primary_key: str
+) -> None:
     """MERGE deduped source into Silver table.
-    
+
     - Match found + record is newer  → UPDATE all columns
     - No match + record is active    → INSERT
     """
@@ -170,29 +192,26 @@ def upsert_to_silver(df_source: DataFrame, silver_table: str, primary_key: str) 
     (
         delta_table.alias("target")
         .merge(
-            df_source.alias("source"),
-            f"target.{primary_key} = source.{primary_key}"
+            df_source.alias("source"), f"target.{primary_key} = source.{primary_key}"
         )
         .whenMatchedUpdate(
-            condition="source.updated_at > target.updated_at",
-            set=col_mapping
+            condition="source.updated_at > target.updated_at", set=col_mapping
         )
-        .whenNotMatchedInsert(
-            condition="source.is_deleted = false",
-            values=col_mapping
-        )
+        .whenNotMatchedInsert(condition="source.is_deleted = false", values=col_mapping)
         .execute()
     )
 
 
-def validate_silver(spark: SparkSession, silver_table: str, primary_key: str, key_columns: List[str]) -> bool:
+def validate_silver(
+    spark: SparkSession, silver_table: str, primary_key: str, key_columns: List[str]
+) -> bool:
     """Run quality checks on a Silver table.
-    
+
     Checks:
     1. Duplicates on primary key
     2. Nulls in key columns
     3. Record count summary (total / active / deleted)
-    
+
     Returns True if all checks pass.
     """
     df = spark.table(silver_table)
@@ -236,6 +255,7 @@ def validate_silver(spark: SparkSession, silver_table: str, primary_key: str, ke
 # Pipeline orchestrator
 # ---------------------------------------------------------------------------
 
+
 def run(spark: SparkSession) -> None:
     """Execute the full Silver pipeline: read → cast → dedup → upsert → validate."""
     catalog = Config.UNITY_CATALOG
@@ -277,7 +297,7 @@ def run(spark: SparkSession) -> None:
         logger.info("  After dedup   : %d", dedup_count)
 
         # Upsert
-        upsert_to_silver(df_deduped, silver_table, primary_key)
+        upsert_to_silver(spark, df_deduped, silver_table, primary_key)
         logger.info("  MERGE complete")
 
         # Validate
@@ -286,7 +306,9 @@ def run(spark: SparkSession) -> None:
             all_ok = False
 
     if not all_ok:
-        raise RuntimeError("Silver pipeline completed with validation errors. Check logs above.")
+        raise RuntimeError(
+            "Silver pipeline completed with validation errors. Check logs above."
+        )
 
     logger.info("")
     logger.info("=== Silver pipeline END — all checks passed ===")

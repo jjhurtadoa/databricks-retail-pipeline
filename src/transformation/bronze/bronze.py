@@ -25,9 +25,9 @@ logger = get_logger(__name__)
 # and the primary key column used for null validation.
 # ---------------------------------------------------------------------------
 TABLES: List[dict] = [
-    {"source": "customers",   "table": "customers",   "pk": "customer_id"},
-    {"source": "products",    "table": "products",    "pk": "product_id"},
-    {"source": "orders",      "table": "orders",      "pk": "order_id"},
+    {"source": "customers", "table": "customers", "pk": "customer_id"},
+    {"source": "products", "table": "products", "pk": "product_id"},
+    {"source": "orders", "table": "orders", "pk": "order_id"},
     {"source": "order_items", "table": "order_items", "pk": "order_item_id"},
 ]
 
@@ -38,6 +38,7 @@ _TIMESTAMP_COLS = ["_extracted_at", "created_at", "updated_at", "order_ts"]
 # ---------------------------------------------------------------------------
 # Transformation helpers
 # ---------------------------------------------------------------------------
+
 
 def normalize_timestamps(df: DataFrame) -> DataFrame:
     """Cast known timestamp columns from string to TimestampType.
@@ -53,6 +54,7 @@ def normalize_timestamps(df: DataFrame) -> DataFrame:
 # ---------------------------------------------------------------------------
 # I/O
 # ---------------------------------------------------------------------------
+
 
 def read_source(spark: SparkSession, source_path: str, table_name: str) -> DataFrame:
     """Read all JSONL files from a Volume sub-folder into a DataFrame."""
@@ -73,6 +75,7 @@ def write_bronze(df: DataFrame, full_table_name: str) -> None:
 # Validation
 # ---------------------------------------------------------------------------
 
+
 def validate_bronze(spark: SparkSession) -> bool:
     """Check primary key nulls on all Bronze tables.
 
@@ -90,7 +93,9 @@ def validate_bronze(spark: SparkSession) -> bool:
         ).collect()[0]["n"]
 
         if null_count > 0:
-            logger.error("PK null check FAILED: %s.%s has %d null PKs", full_name, pk, null_count)
+            logger.error(
+                "PK null check FAILED: %s.%s has %d null PKs", full_name, pk, null_count
+            )
             all_ok = False
         else:
             logger.info("PK null check OK: %s", full_name)
@@ -107,15 +112,22 @@ def reconcile_counts(spark: SparkSession, base_path: str) -> None:
 
     for tbl in TABLES:
         source_path = f"{base_path}/{tbl['source']}"
-        full_name   = f"{schema}.{tbl['table']}"
+        full_name = f"{schema}.{tbl['table']}"
 
-        source_count = spark.sql(f"SELECT COUNT(*) AS n FROM json.`{source_path}`").collect()[0]["n"]
-        bronze_count = spark.sql(f"SELECT COUNT(*) AS n FROM {full_name}").collect()[0]["n"]
+        source_count = spark.sql(
+            f"SELECT COUNT(*) AS n FROM json.`{source_path}`"
+        ).collect()[0]["n"]
+        bronze_count = spark.sql(f"SELECT COUNT(*) AS n FROM {full_name}").collect()[0][
+            "n"
+        ]
 
         status = "OK" if bronze_count >= source_count else "MISMATCH"
         logger.info(
             "Reconciliation [%s] %s — source: %d | bronze: %d",
-            status, tbl["table"], source_count, bronze_count,
+            status,
+            tbl["table"],
+            source_count,
+            bronze_count,
         )
 
 
@@ -123,11 +135,12 @@ def reconcile_counts(spark: SparkSession, base_path: str) -> None:
 # Pipeline orchestrator
 # ---------------------------------------------------------------------------
 
+
 def run(spark: SparkSession) -> None:
     """Execute the full Bronze pipeline: read -> normalize -> write -> validate."""
-    catalog     = Config.UNITY_CATALOG
-    schema      = Config.BRONZE_SCHEMA
-    base_path   = Config.VOLUME_SOURCE_PATH
+    catalog = Config.UNITY_CATALOG
+    schema = Config.BRONZE_SCHEMA
+    base_path = Config.VOLUME_SOURCE_PATH
 
     logger.info("=== Bronze pipeline START ===")
     logger.info("Catalog: %s | Schema: %s | Source: %s", catalog, schema, base_path)
@@ -139,7 +152,7 @@ def run(spark: SparkSession) -> None:
 
     # Process each table: read, normalize, write
     for tbl in TABLES:
-        source_path     = f"{base_path}/{tbl['source']}"
+        source_path = f"{base_path}/{tbl['source']}"
         full_table_name = f"{schema}.{tbl['table']}"
 
         df = read_source(spark, source_path, tbl["table"])
@@ -154,7 +167,9 @@ def run(spark: SparkSession) -> None:
     reconcile_counts(spark, base_path)
 
     if not passed:
-        raise RuntimeError("Bronze pipeline completed with validation errors. Check logs above.")
+        raise RuntimeError(
+            "Bronze pipeline completed with validation errors. Check logs above."
+        )
 
     logger.info("=== Bronze pipeline END — all checks passed ===")
 
@@ -172,4 +187,3 @@ if __name__ == "__main__":
         sys.exit(1)
 
     run(spark)  # noqa: F821
-

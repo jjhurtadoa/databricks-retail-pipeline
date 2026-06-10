@@ -1,0 +1,74 @@
+# Databricks Job DAG Configuration
+# Define the medallion pipeline (Bronze → Silver → Gold) as a multi-task job
+# Deploy via Databricks CLI: databricks jobs create --json @medallion_pipeline.yml
+
+name: medallion_pipeline_prod
+description: "Production medallion architecture pipeline: Bronze (raw) → Silver (conformed) → Gold (dimensional)"
+
+tasks:
+  # Task 1: Bronze Layer (append-only raw ingestion from Volume)
+  - task_key: bronze_layer
+    description: "Ingest raw JSONL from Volume into Bronze Delta tables"
+    python_wheel_task:
+      package_name: databricks_retail
+      entry_point: bronze
+    new_cluster:
+      spark_version: 13.3.x-scala2.12
+      node_type_id: i3.xlarge
+      num_workers: 2
+      aws_attributes:
+        availability: SPOT_WITH_FALLBACK
+      spark_conf:
+        spark.databricks.cluster.profile: "singleNode"
+    timeout_seconds: 3600
+    max_retries: 1
+
+  # Task 2: Silver Layer (dedup, conform, MERGE into Silver tables)
+  - task_key: silver_layer
+    description: "Clean Bronze → deduplicate → conform → MERGE into Silver tables"
+    depends_on:
+      - task_key: bronze_layer
+    python_wheel_task:
+      package_name: databricks_retail
+      entry_point: silver
+    new_cluster:
+      spark_version: 13.3.x-scala2.12
+      node_type_id: i3.xlarge
+      num_workers: 2
+      aws_attributes:
+        availability: SPOT_WITH_FALLBACK
+    timeout_seconds: 3600
+    max_retries: 1
+
+  # Task 3: Gold Layer (star schema, dims, fact, KPIs, optimization)
+  - task_key: gold_layer
+    description: "Build star schema from Silver (dims + fact) → validate FKs → optimize → KPI views"
+    depends_on:
+      - task_key: silver_layer
+    python_wheel_task:
+      package_name: databricks_retail
+      entry_point: gold
+    new_cluster:
+      spark_version: 13.3.x-scala2.12
+      node_type_id: i3.xlarge
+      num_workers: 2
+      aws_attributes:
+        availability: SPOT_WITH_FALLBACK
+    timeout_seconds: 3600
+    max_retries: 1
+
+# Schedule
+schedule:
+  quartz_cron_expression: "0 2 * * ?"  # 2 AM UTC daily
+  timezone_id: "UTC"
+
+# Notifications
+email_notifications:
+  on_failure:
+    - your-email@example.com
+  on_success:
+    - your-email@example.com
+
+# Allow retries
+timeout_seconds: 10800  # 3 hours total
+max_concurrent_runs: 1  # Serialize pipeline runs
